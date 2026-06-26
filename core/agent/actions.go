@@ -138,6 +138,37 @@ func (a *Agent) availableActions(j *types.Job) types.Actions {
 	return defaultActions
 }
 
+// filterActions constrains a set of actions to a per-agent allow/deny-list by tool name.
+// If allow is non-empty, only actions whose name is in allow survive; names in deny are
+// always removed. Empty allow and deny → input is returned unchanged (backward compatible).
+func filterActions(acts types.Actions, allow, deny []string) types.Actions {
+	if len(allow) == 0 && len(deny) == 0 {
+		return acts
+	}
+	allowSet := make(map[string]struct{}, len(allow))
+	for _, n := range allow {
+		allowSet[n] = struct{}{}
+	}
+	denySet := make(map[string]struct{}, len(deny))
+	for _, n := range deny {
+		denySet[n] = struct{}{}
+	}
+	out := make(types.Actions, 0, len(acts))
+	for _, act := range acts {
+		name := string(act.Definition().Name)
+		if len(allowSet) > 0 {
+			if _, ok := allowSet[name]; !ok {
+				continue
+			}
+		}
+		if _, ok := denySet[name]; ok {
+			continue
+		}
+		out = append(out, act)
+	}
+	return out
+}
+
 func (a *Agent) prepareHUD() (promptHUD *PromptHUD) {
 	if !a.options.enableHUD {
 		return nil

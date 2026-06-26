@@ -858,8 +858,13 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 	}
 
 	availableActions := a.getAvailableActionsForJob(job)
+	// Per-agent tool allow/deny-list: constrain the EFFECTIVE tool set across all
+	// sources (built-in, KB-injected and MCP) at this single assembly point, so both
+	// the tools presented to the model (cogitoTools) and the lookup set (allActions)
+	// respect it. Empty allow/deny = unchanged behaviour.
+	availableActions = filterActions(availableActions, a.options.allowedTools, a.options.excludedTools)
 	cogitoTools := availableActions.ToCogitoTools(job.GetContext(), a.sharedState)
-	allActions := append(availableActions, a.mcpActionDefinitions...)
+	allActions := append(availableActions, filterActions(a.mcpActionDefinitions, a.options.allowedTools, a.options.excludedTools)...)
 
 	obs := job.Obs
 	if obs == nil && a.observer != nil && job.Obs != nil {

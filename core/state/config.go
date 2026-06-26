@@ -105,6 +105,11 @@ type AgentConfig struct {
 	StripThinkingTags        bool   `json:"strip_thinking_tags" form:"strip_thinking_tags"`
 	EnableEvaluation         bool   `json:"enable_evaluation" form:"enable_evaluation"`
 	MaxEvaluationLoops       int    `json:"max_evaluation_loops" form:"max_evaluation_loops"`
+	// AllowedTools/ExcludedTools constrain the agent's EFFECTIVE tool set (across MCP,
+	// built-in and KB-injected actions). If AllowedTools is non-empty, only those tool
+	// names are kept; ExcludedTools are always removed. Empty = unchanged behaviour.
+	AllowedTools  []string `json:"allowed_tools" form:"allowed_tools"`
+	ExcludedTools []string `json:"excluded_tools" form:"excluded_tools"`
 }
 
 type AgentConfigMeta struct {

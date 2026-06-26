@@ -40,6 +40,7 @@ type options struct {
 	randomIdentity                                                                               bool
 	userActions                                                                                  types.Actions
 	jobFilters                                                                                   types.JobFilters
+	allowedTools, excludedTools                                                                  []string
 	enableHUD, standaloneJob, showCharacter, enableKB, enableSummaryMemory, enableLongTermMemory bool
 	stripThinkingTags                                                                            bool
 	kbAutoSearch                                                                                 bool
@@ -508,6 +509,17 @@ func WithTTSModel(model string) Option {
 func WithKBAutoSearch(enabled bool) Option {
 	return func(o *options) error {
 		o.kbAutoSearch = enabled
+		return nil
+	}
+}
+
+// WithToolFilter constrains the agent's effective tool set. If allow is non-empty,
+// only those tool names survive; deny names are always removed. Applied across ALL
+// tool sources (MCP, built-in, KB-injected) at the single assembly point.
+func WithToolFilter(allow, deny []string) Option {
+	return func(o *options) error {
+		o.allowedTools = allow
+		o.excludedTools = deny
 		return nil
 	}
 }
