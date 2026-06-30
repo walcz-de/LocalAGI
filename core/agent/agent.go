@@ -747,6 +747,48 @@ func (a *Agent) filterJob(job *types.Job) (ok bool, err error) {
 	return failedBy == "" && (!hasTriggers || triggeredBy != ""), nil
 }
 
+// groundingToolName is the validate_grounding tool exposed by the grounding MCP.
+// An agent that has this tool bound is treated as "grounding-capable" and must
+// pass it (ok:true) before sending its final answer.
+const groundingToolName = "validate_grounding"
+
+// groundingResultOK reports whether a validate_grounding tool result indicates
+// the output passed every check (ok:true). The result is the tool's JSON payload
+// (possibly wrapped in MCP content), so we try a clean unmarshal first and fall
+// back to a lenient substring match.
+func groundingResultOK(result string) bool {
+	var v struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(result), &v); err == nil {
+		return v.OK
+	}
+	return strings.Contains(result, `"ok": true`) || strings.Contains(result, `"ok":true`)
+}
+
+// groundingGate enforces, at the OUTPUT, that a grounding-capable agent runs
+// validate_grounding (to ok:true) before sending its final answer. It returns
+// (decision, blocked): blocked=true means the final message must be deferred and
+// the model nudged to validate first. It is a no-op (allow) when grounding is not
+// available or already passed, and after max attempts it allows the answer through
+// to avoid an unbounded loop (the caller logs the bypass). attempts is mutated.
+func groundingGate(groundingAvailable, groundingPassed bool, attempts *int, max int) (cogito.ToolCallDecision, bool) {
+	if !groundingAvailable || groundingPassed {
+		return cogito.ToolCallDecision{}, false
+	}
+	if *attempts >= max {
+		return cogito.ToolCallDecision{}, false
+	}
+	*attempts++
+	return cogito.ToolCallDecision{
+		Approved: true,
+		Adjustment: "Before you send your final answer you MUST first call the tool " +
+			"validate_grounding with your factual claims (each with a source) and " +
+			"arithmetic cross-checks, and reach ok:true. Call validate_grounding now; " +
+			"only send the final message after it passes.",
+	}, true
+}
+
 // correctUnknownToolCall decides how to handle a tool call whose name does not
 // match any available action. corrected is false for the built-in control verbs
 // (stop/send_message/update_state), which are dispatched by name elsewhere and
@@ -1081,6 +1123,15 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 	const maxToolCorrectionAttempts = 3
 	toolCorrectionAttempts := make(map[string]int)
 
+	// Grounding-Gate: a grounding-capable agent must run validate_grounding (to
+	// ok:true) before it may send its final answer. We track whether that passed
+	// during the run and, in the send_message callback, defer the answer until it
+	// has — bounded to avoid an unbounded loop. Enforcement at the OUTPUT, not the
+	// prompt (a model follows "always validate" unreliably).
+	const maxGroundingGateAttempts = 3
+	groundingGateAttempts := 0
+	groundingPassed := false
+
 	cogitoOpts := []cogito.Option{
 		cogito.WithMCPs(a.mcpSessions...),
 		cogito.WithTools(
@@ -1130,6 +1181,11 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 			})
 		}),
 		cogito.WithToolCallResultCallback(func(t cogito.ToolStatus) {
+			// Grounding-Gate: record a passing validate_grounding result so the
+			// send_message callback knows the output was validated this run.
+			if t.Name == groundingToolName && groundingResultOK(t.Result) {
+				groundingPassed = true
+			}
 			toolObs := observables[t.ToolArguments.ID]
 			if a.observer != nil && toolObs != nil {
 				toolObs.Progress = append(toolObs.Progress, types.Progress{
@@ -1263,6 +1319,14 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 						Approved: false,
 					}
 				case action.ConversationActionName:
+					// Grounding-Gate at the OUTPUT: a grounding-capable agent may
+					// not send its final answer until validate_grounding passed.
+					groundingAvailable := allActions.Find(groundingToolName) != nil
+					if decision, blocked := groundingGate(groundingAvailable, groundingPassed, &groundingGateAttempts, maxGroundingGateAttempts); blocked {
+						xlog.Warn("Grounding-Gate: deferring final answer until validate_grounding passes",
+							"agent", a.Character.Name, "attempt", groundingGateAttempts)
+						return decision
+					}
 					message := action.ConversationActionResponse{}
 					toolArgs, _ := json.Marshal(tc.Arguments)
 					if err := json.Unmarshal([]byte(toolArgs), &message); err != nil {
