@@ -80,3 +80,29 @@ func TestGroundingGate(t *testing.T) {
 		}
 	})
 }
+
+func TestTextFinalizationNeedsGrounding(t *testing.T) {
+	const max = 3
+	cases := []struct {
+		name                          string
+		available, passed             bool
+		attempts                      int
+		role, content                 string
+		want                          bool
+	}{
+		{"grounding unavailable", false, false, 0, "assistant", "answer", false},
+		{"already passed", true, true, 0, "assistant", "answer", false},
+		{"max attempts reached (graceful bypass)", true, false, max, "assistant", "answer", false},
+		{"last message is a tool call, not text", true, false, 0, "tool", "", false},
+		{"empty text answer", true, false, 0, "assistant", "   ", false},
+		{"text finalization without grounding -> gate", true, false, 0, "assistant", "here is my answer", true},
+		{"still under max -> gate", true, false, max - 1, "assistant", "answer", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := textFinalizationNeedsGrounding(c.available, c.passed, c.attempts, max, c.role, c.content); got != c.want {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
