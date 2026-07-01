@@ -789,6 +789,16 @@ func groundingGate(groundingAvailable, groundingPassed bool, attempts *int, max 
 	}, true
 }
 
+// textFinalizationNeedsGrounding reports whether a grounding-capable agent is about
+// to finalize with a plain-text assistant answer that has NOT passed
+// validate_grounding — i.e. it bypassed the send_message gate and must be nudged to
+// validate first. Returns false once grounding passed, when unavailable, after max
+// attempts (graceful bypass), or when the last message is not a non-empty text answer.
+func textFinalizationNeedsGrounding(groundingAvailable, groundingPassed bool, attempts, max int, lastRole, lastContent string) bool {
+	return groundingAvailable && !groundingPassed && attempts < max &&
+		lastRole == "assistant" && strings.TrimSpace(lastContent) != ""
+}
+
 // correctUnknownToolCall decides how to handle a tool call whose name does not
 // match any available action. corrected is false for the built-in control verbs
 // (stop/send_message/update_state), which are dispatched by name elsewhere and
@@ -1529,6 +1539,39 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 			job.Result.Finish(nil)
 			return
 		}
+	}
+
+	// Chat-output grounding gate (text-finalization path). The send_message gate
+	// above only fires when the model finalizes via the send_message tool. Weaker
+	// local models often finalize with a plain assistant text answer instead,
+	// bypassing that gate entirely. Enforce grounding here too: while a
+	// grounding-capable agent is about to finalize with text but has not yet
+	// passed validate_grounding, nudge it to validate and re-run tools. Bounded by
+	// maxGroundingGateAttempts, then bypass with a logged warning (graceful, same
+	// as the send_message gate) so a stubborn model can't hang the turn.
+	for len(fragment.Messages) > 0 && textFinalizationNeedsGrounding(
+		allActions.Find(groundingToolName) != nil, groundingPassed, groundingGateAttempts,
+		maxGroundingGateAttempts, fragment.LastMessage().Role, fragment.LastMessage().Content) {
+		groundingGateAttempts++
+		xlog.Info("chat-output grounding gate: text finalization without grounding, nudging validate_grounding",
+			"agent", a.Character.Name, "attempt", groundingGateAttempts)
+		fragment.Messages = append(fragment.Messages, openai.ChatCompletionMessage{
+			Role: "user",
+			Content: "Before you give your final answer you MUST first call the tool " +
+				"validate_grounding with your factual claims (each with a source) and " +
+				"arithmetic cross-checks, and reach ok:true. Call validate_grounding now; " +
+				"do not answer in plain text until it passes.",
+		})
+		fragment, err = cogito.ExecuteTools(a.llm, fragment, cogitoOpts...)
+		if err != nil && !errors.Is(err, cogito.ErrNoToolSelected) && !errors.Is(err, cogito.ErrGoalNotAchieved) {
+			xlog.Error("chat-output grounding gate re-entry failed", "error", err)
+			break
+		}
+	}
+	if allActions.Find(groundingToolName) != nil && !groundingPassed &&
+		groundingGateAttempts >= maxGroundingGateAttempts {
+		xlog.Warn("chat-output grounding gate: bypass after max attempts — text finalized ungated",
+			"agent", a.Character.Name)
 	}
 
 	if len(fragment.Messages) == 0 {
