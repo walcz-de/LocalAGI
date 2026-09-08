@@ -34,10 +34,20 @@ func (j *JobResult) SetResult(text ActionState) {
 // Finish marks the job as done and closes the ready channel.
 func (j *JobResult) Finish(e error) {
 	j.Lock()
-	j.Error = e
+	// Idempotent: a job may be finished from more than one path (an early
+	// finish inside a tool decision, then the regular completion). Closing
+	// the ready channel twice panics and took the whole agent down. The
+	// first Finish wins: its error and its finalizers run; later calls are
+	// no-ops.
+	select {
+	case <-j.ready:
+		j.Unlock()
+		return
+	default:
+		j.Error = e
+		close(j.ready)
+	}
 	j.Unlock()
-
-	close(j.ready)
 
 	for _, f := range j.Finalizers {
 		f(j.Conversation)
