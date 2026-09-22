@@ -10,3 +10,7 @@ LocalAGI
 volumes/
 example/scheduler/scheduler
 example/scheduler/example_tasks.json
+
+# Laufzeit-Artefakt des Agent-Schedulers (core/agent/agent.go: schedulerPath = "scheduled_tasks.json"),
+# entsteht beim Testlauf im Paketverzeichnis — nie Quelle. Repo-Hygiene-Gate 22.09.
+core/agent/scheduled_tasks.json
