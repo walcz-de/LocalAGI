@@ -161,3 +161,5 @@ require (
 	google.golang.org/protobuf v1.36.10 // indirect
 	maunium.net/go/maulogger/v2 v2.4.1 // indirect
 )
+
+replace github.com/mudler/cogito => github.com/walcz-de/cogito v0.11.1-0.20260925063043-5c65771a928d
