@@ -1121,6 +1121,10 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 
 	fragment := cogito.NewFragment(conv...)
 
+	// A restarted MCP server has forgotten our sessions; reconnect before this run
+	// uses them (and before the MCP tool list below is read).
+	a.ensureMCPSessions(job.GetContext())
+
 	availableActions := a.getAvailableActionsForJob(job)
 	cogitoTools := availableActions.ToCogitoTools(job.GetContext(), a.sharedState)
 	allActions := append(availableActions, a.mcpActionDefinitions...)
