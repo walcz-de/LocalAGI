@@ -218,9 +218,7 @@ func (a *Agent) initMCPActions() error {
 			xlog.Error("Failed to add tools for extra MCP session", "error", err.Error())
 			continue
 		}
-		if !containsSession(a.mcpSessions, session) {
-			a.mcpSessions = append(a.mcpSessions, session)
-		}
+		a.mcpSessions = append(a.mcpSessions, session)
 		generatedActions = append(generatedActions, actions...)
 	}
 
@@ -243,44 +241,4 @@ func (a *Agent) closeMCPServers() {
 		}
 	}
 	a.mcpSessions = keep
-}
-
-func containsSession(sessions []*mcp.ClientSession, s *mcp.ClientSession) bool {
-	for _, x := range sessions {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
-// ensureMCPSessions pings the agent's own MCP sessions (remote and stdio, not the
-// pre-connected extra ones) and re-initialises all of them if one is gone.
-//
-// Sessions are opened once, when the agent is created. When the MCP server
-// restarts it forgets them and answers the next request with 404 ("session not
-// found"); the go-sdk client then fails that session for good and does not
-// reconnect by itself. Without this check the agent keeps a dead session - or,
-// behind a server that revives unknown session IDs, a stale tool list - until the
-// whole process restarts. LocalAI's own MCP session cache does the same ping.
-func (a *Agent) ensureMCPSessions(ctx context.Context) {
-	extra := make(map[*mcp.ClientSession]bool, len(a.options.extraMCPSessions))
-	for _, e := range a.options.extraMCPSessions {
-		extra[e] = true
-	}
-	for _, s := range a.mcpSessions {
-		if extra[s] {
-			continue
-		}
-		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := s.Ping(pingCtx, nil)
-		cancel()
-		if err != nil {
-			xlog.Warn("MCP session is gone, reconnecting all MCP servers", "error", err.Error())
-			if err := a.initMCPActions(); err != nil {
-				xlog.Error("Reconnecting MCP servers failed", "error", err.Error())
-			}
-			return
-		}
-	}
 }
