@@ -1347,6 +1347,11 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 
 				switch tc.Name {
 				case action.StopActionName:
+					// A deliberate stop ends the run. Rejecting the call makes cogito
+					// return ErrToolCallCallbackInterrupted; mark the job as settled
+					// by the callback so that is not reported as a failure.
+					finishedByCallback = true
+					finishErr = nil
 					return cogito.ToolCallDecision{
 						Approved: false,
 					}
@@ -1532,6 +1537,14 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 		cogitoOpts...,
 	)
 
+	// Checked before the error: a callback that ends the run (send_message, stop)
+	// returns Approved=false, which cogito reports as ErrToolCallCallbackInterrupted.
+	// Same order as upstream runConcluded (mudler/LocalAGI a85341a).
+	if finishedByCallback {
+		job.Result.Finish(finishErr)
+		return
+	}
+
 	if err != nil && !errors.Is(err, cogito.ErrNoToolSelected) && !errors.Is(err, cogito.ErrGoalNotAchieved) && !userTool {
 		if obs != nil {
 			obs.Completion = &types.Completion{
@@ -1541,11 +1554,6 @@ func (a *Agent) consumeJob(job *types.Job, role string) {
 		}
 		xlog.Error("Error executing cogito", "error", err)
 		job.Result.Finish(err)
-		return
-	}
-
-	if finishedByCallback {
-		job.Result.Finish(finishErr)
 		return
 	}
 
